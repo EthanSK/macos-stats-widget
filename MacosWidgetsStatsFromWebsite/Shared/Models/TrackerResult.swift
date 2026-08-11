@@ -168,6 +168,13 @@ struct TrackerReading: Codable, Equatable {
     /// — decoded as [:] when absent.
     var secondaryValues: [String: TrackerSecondaryValue]
 
+    /// Short user-facing description of the current failure, shared by the
+    /// main app and widget extension. Keeping this derived from `lastError`
+    /// ensures every surface uses the same `TrackerFailureKind` classifier.
+    var failureHeadline: String? {
+        TrackerFailureKind.classify(reading: self)?.headline
+    }
+
     init(
         currentValue: String? = nil,
         currentNumeric: Double? = nil,

@@ -91,11 +91,11 @@ struct SingleBigNumberTemplate: View {
     }
 
     private var footerText: String {
-        // Surface a short, actionable hint when the tracker is broken so users
-        // know to re-identify the element rather than wondering why the value
-        // is missing. Falls back to the relative-update timestamp otherwise.
+        // Match the main app's failure classification instead of assuming
+        // every broken tracker has a bad selector. This keeps login walls,
+        // timeouts, selector misses, and unknown failures distinguishable.
         if item?.status == .broken {
-            return "Selector needs re-identifying"
+            return item?.reading?.failureHeadline ?? "Needs attention"
         }
         return item?.updatedText ?? "not updated"
     }

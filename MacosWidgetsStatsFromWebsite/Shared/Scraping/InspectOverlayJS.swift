@@ -52,7 +52,8 @@ enum InspectOverlayJS {
     // ─── Top-of-viewport banner ──────────────────────────────────────
     // v0.21.48 added a visible banner so users knew the picker was live
     // even before they moved their mouse. v0.21.77 expands the banner
-    // with a "Start" button — see the long comment below.
+    // with a "Start" button; v0.21.85 lets the user collapse it to a
+    // small top-centre tab when it obscures the site's own controls.
     //
     // Layout choices (unchanged from v0.21.48):
     //   • position:fixed at top — survives page scroll, always in view
@@ -70,16 +71,16 @@ enum InspectOverlayJS {
     //   text "eat" picks on tall pages where it overlapped the target.
     //
     //   v0.21.77 changes the model: inspection is GATED behind the
-    //   Start button on this banner. The button itself MUST be
-    //   clickable, so the banner needs `pointer-events:auto`. But we
-    //   ONLY want the BUTTON to receive clicks — the rest of the
-    //   banner surface should still pass clicks through to the page
+    //   Start button on this banner. Its interactive controls MUST be
+    //   clickable, but we ONLY want those controls to receive clicks —
+    //   the rest of the banner surface should still pass clicks through
+    //   to the page
     //   beneath so users can interact with anything that happens to be
     //   under the banner (e.g. a login form at the very top of the
     //   viewport). We get this by:
     //     • Banner container: pointer-events:none  ← clicks pass through
-    //     • Start button (child):  pointer-events:auto  ← clicks land
-    //   That isolates the click target to the button alone.
+    //     • Start + collapse buttons: pointer-events:auto ← clicks land
+    //   That isolates click targets to the overlay controls alone.
     const banner = document.createElement('div');
     banner.setAttribute('data-stats-widget-inspect-banner', 'true');
     banner.style.cssText = [
@@ -87,7 +88,9 @@ enum InspectOverlayJS {
       'top:0',
       'left:0',
       'right:0',
-      'padding:10px 16px',
+      // Symmetric side room keeps centered content clear of the
+      // absolutely-positioned collapse button on either side.
+      'padding:10px 52px',
       'background:#2997ff',
       'color:#ffffff',
       'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
@@ -99,8 +102,8 @@ enum InspectOverlayJS {
       'box-shadow:0 2px 8px rgba(0,0,0,0.25)',
       'box-sizing:border-box',
       // pointer-events:none so banner SURFACE passes clicks through to
-      // the page. The Start button (added below) re-enables
-      // pointer-events on ITSELF so it's the sole clickable region.
+      // the page. The Start and collapse buttons (added below) each
+      // re-enable pointer-events so they are the only clickable regions.
       'pointer-events:none',
       'z-index:2147483647',
       'user-select:none',
@@ -152,6 +155,50 @@ enum InspectOverlayJS {
     ].join(';');
     banner.appendChild(startButton);
 
+    // ─── Collapse / expand button ────────────────────────────────────
+    // The full-width banner is intentionally conspicuous, but some sites
+    // place important controls at the very top of the viewport. This
+    // button reduces the banner to one small blue tab without changing
+    // whether inspection is passive or active. The same control expands
+    // it again, so the instructions and pre-Start CTA are never lost.
+    const bannerToggleButton = document.createElement('button');
+    bannerToggleButton.setAttribute('type', 'button');
+    bannerToggleButton.setAttribute('data-stats-widget-inspect-banner-toggle', 'true');
+    bannerToggleButton.setAttribute('aria-label', 'Minimize instructions');
+    bannerToggleButton.setAttribute('aria-expanded', 'true');
+    bannerToggleButton.setAttribute('title', 'Minimize instructions');
+    bannerToggleButton.textContent = '\u2303';
+    bannerToggleButton.style.cssText = [
+      'pointer-events:auto',
+      'cursor:pointer',
+      'position:absolute',
+      'top:50%',
+      'right:12px',
+      'transform:translateY(-50%)',
+      'width:28px',
+      'height:28px',
+      'padding:0',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'background:rgba(0,0,0,0.14)',
+      'color:#ffffff',
+      'border:1px solid rgba(255,255,255,0.42)',
+      'border-radius:8px',
+      'font-family:inherit',
+      'font-size:17px',
+      'font-weight:700',
+      'line-height:1',
+      'box-sizing:border-box',
+      'box-shadow:0 1px 3px rgba(0,0,0,0.12)',
+      'outline-offset:2px',
+      'user-select:none',
+      '-webkit-user-select:none',
+      '-webkit-appearance:none',
+      'appearance:none'
+    ].join(';');
+    banner.appendChild(bannerToggleButton);
+
     root.appendChild(banner);
 
     // ─── State machine ───────────────────────────────────────────────
@@ -164,8 +211,72 @@ enum InspectOverlayJS {
     // the page is untouched and the user's clicks pass straight through
     // to whatever's beneath the (pointer-events:none) banner.
     let inspectionActive = false;
+    let bannerCollapsed = false;
     let hoverElement = null;
     window.__statsWidgetHover = null;
+
+    function setBannerCollapsed(collapsed) {
+      bannerCollapsed = collapsed;
+
+      if (bannerCollapsed) {
+        Object.assign(banner.style, {
+          left: '50%',
+          right: 'auto',
+          width: '32px',
+          height: '28px',
+          padding: '0',
+          background: 'transparent',
+          borderRadius: '8px',
+          boxShadow: 'none',
+          gap: '0',
+          flexWrap: 'nowrap',
+          transform: 'translateX(-50%)'
+        });
+        bannerLabel.style.display = 'none';
+        startButton.style.display = 'none';
+        Object.assign(bannerToggleButton.style, {
+          position: 'static',
+          top: 'auto',
+          right: 'auto',
+          transform: 'none',
+          width: '32px',
+          background: '#2997ff'
+        });
+        bannerToggleButton.textContent = '\u2304';
+        bannerToggleButton.setAttribute('aria-label', 'Expand instructions');
+        bannerToggleButton.setAttribute('aria-expanded', 'false');
+        bannerToggleButton.setAttribute('title', 'Expand instructions');
+        return;
+      }
+
+      Object.assign(banner.style, {
+        left: '0',
+        right: '0',
+        width: 'auto',
+        height: 'auto',
+        padding: '10px 52px',
+        background: '#2997ff',
+        borderRadius: '0',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+        gap: '12px',
+        flexWrap: 'wrap',
+        transform: 'none'
+      });
+      bannerLabel.style.display = '';
+      startButton.style.display = inspectionActive ? 'none' : '';
+      Object.assign(bannerToggleButton.style, {
+        position: 'absolute',
+        top: '50%',
+        right: '12px',
+        transform: 'translateY(-50%)',
+        width: '28px',
+        background: 'rgba(0,0,0,0.14)'
+      });
+      bannerToggleButton.textContent = '\u2303';
+      bannerToggleButton.setAttribute('aria-label', 'Minimize instructions');
+      bannerToggleButton.setAttribute('aria-expanded', 'true');
+      bannerToggleButton.setAttribute('title', 'Minimize instructions');
+    }
 
     function postError(error) {
       const message = String(error && error.message ? error.message : error);
@@ -298,6 +409,7 @@ enum InspectOverlayJS {
       document.removeEventListener('click', onClick, true);
       document.removeEventListener('keydown', onKeyDown, true);
       startButton.removeEventListener('click', onStartClicked, true);
+      bannerToggleButton.removeEventListener('click', onBannerToggleClicked, true);
       if (outline.parentNode) {
         outline.parentNode.removeChild(outline);
       }
@@ -323,6 +435,16 @@ enum InspectOverlayJS {
       if (!isElement(event.target)) {
         return;
       }
+      // In active inspection mode, the document listener runs in the
+      // capture phase before a banner button's own listener. Exclude the
+      // overlay controls so minimizing or expanding cannot accidentally
+      // select the button itself as the tracked website element.
+      if (banner.contains(event.target)) {
+        hoverElement = null;
+        window.__statsWidgetHover = null;
+        outline.style.display = 'none';
+        return;
+      }
 
       hoverElement = event.target;
       window.__statsWidgetHover = hoverElement;
@@ -335,6 +457,9 @@ enum InspectOverlayJS {
       // default / stopping propagation, so the click continues through
       // to the page as if the overlay weren't installed.
       if (!inspectionActive) {
+        return;
+      }
+      if (isElement(event.target) && banner.contains(event.target)) {
         return;
       }
 
@@ -388,6 +513,13 @@ enum InspectOverlayJS {
       }
     }
 
+    function onBannerToggleClicked(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      setBannerCollapsed(!bannerCollapsed);
+    }
+
     // ─── Start-button handler ────────────────────────────────────────
     // Flips the state machine from PASSIVE → ACTIVE:
     //   1. Set inspectionActive = true so the guards in onMove/onClick
@@ -431,6 +563,7 @@ enum InspectOverlayJS {
     window.__statsWidgetInspectCleanup = cleanup;
     document.addEventListener('keydown', onKeyDown, true);
     startButton.addEventListener('click', onStartClicked, true);
+    bannerToggleButton.addEventListener('click', onBannerToggleClicked, true);
   } catch (error) {
     const message = String(error && error.message ? error.message : error);
     if (window.webkit && webkit.messageHandlers && webkit.messageHandlers.inspectError) {

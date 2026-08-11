@@ -12,6 +12,29 @@ import XCTest
 
 final class AutoRepairGateTests: XCTestCase {
 
+    func testFailureHeadlineDistinguishesLoginFromSelectorFailure() {
+        let loginReading = TrackerReading(
+            status: .broken,
+            lastError: SelectorExtractionError.loginRequired.errorDescription
+        )
+        let selectorReading = TrackerReading(
+            status: .broken,
+            lastError: SelectorExtractionError.selectorDidNotMatch.errorDescription
+        )
+
+        XCTAssertEqual(loginReading.failureHeadline, "Login required")
+        XCTAssertEqual(selectorReading.failureHeadline, "Element not found")
+    }
+
+    func testFailureHeadlineIsNilForHealthyReading() {
+        let reading = TrackerReading(
+            status: .ok,
+            lastError: SelectorExtractionError.loginRequired.errorDescription
+        )
+
+        XCTAssertNil(reading.failureHeadline)
+    }
+
     // MARK: - Genuine selectorNotFound (the ONLY thing that should fire)
 
     func testFiresOnGenuineSustainedSelectorNotFound() {

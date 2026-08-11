@@ -5,6 +5,21 @@ Release-by-release notes for the Stats Widget from Website project.
 Format: each entry is dated, lists the user-visible changes first, then the
 under-the-hood / signing / packaging changes. Newest first.
 
+## v0.21.85 — 2026-08-11
+
+### Clearer recovery when a tracked page needs attention
+
+- **Broken widgets now show the real problem instead of always blaming the
+  selector.** The widget uses the same failure classification as the main app,
+  so signed-out pages say **Login required**, genuine selector misses say
+  **Element not found**, and timeouts or unknown failures keep their own clear
+  labels.
+- **The Identify instructions can now collapse into a small top-centre tab.**
+  This keeps top-of-page website controls accessible while preserving a clear
+  way to expand the instructions again. The toggle works before and after
+  starting selection and cannot accidentally become the selected webpage
+  element.
+
 ## v0.21.84 — 2026-07-21
 
 ### A calmer, complete first-run experience

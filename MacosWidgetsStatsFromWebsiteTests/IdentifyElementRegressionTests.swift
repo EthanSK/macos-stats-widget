@@ -136,6 +136,99 @@ final class IdentifyElementRegressionTests: XCTestCase {
         )
     }
 
+    // v0.21.85 — the identify instructions can shrink to a small tab so
+    // they do not hide top-of-page controls. Pin both the discoverable
+    // control and the active-inspection exclusion: without the latter,
+    // the document capture listener would select the toggle itself.
+    func testInspectOverlayJSContainsCollapsibleBanner() {
+        let script = InspectOverlayJS.inspectOverlayJS(contextLabel: nil)
+
+        XCTAssertTrue(
+            script.contains("data-stats-widget-inspect-banner-toggle"),
+            "Inject-JS lost the collapse / expand control."
+        )
+        XCTAssertTrue(
+            script.contains("aria-label', 'Minimize instructions"),
+            "Expanded banner toggle lost its accessible name."
+        )
+        XCTAssertTrue(
+            script.contains("aria-label', 'Expand instructions"),
+            "Collapsed banner toggle lost its accessible name."
+        )
+        XCTAssertTrue(
+            script.contains("if (isElement(event.target) && banner.contains(event.target))"),
+            "Active picker no longer excludes banner controls from element capture."
+        )
+    }
+
+    func testInspectOverlayBannerCollapsesAndExpandsWithoutCapturingItsToggle() throws {
+        let context = try overlayDOMContext()
+        context.evaluateScript(InspectOverlayJS.inspectOverlayJS(contextLabel: "Example"))
+
+        XCTAssertNil(context.exception)
+        XCTAssertTrue(try XCTUnwrap(context.evaluateScript("window.__statsWidgetInspectError === null")).toBool())
+
+        let value = try XCTUnwrap(context.evaluateScript("""
+        (() => {
+          const banner = document.querySelector('[data-stats-widget-inspect-banner]');
+          const label = document.querySelector('[data-stats-widget-inspect-banner-label]');
+          const start = document.querySelector('[data-stats-widget-inspect-start]');
+          const toggle = document.querySelector('[data-stats-widget-inspect-banner-toggle]');
+
+          const click = target => ({
+            target,
+            preventDefault() {},
+            stopPropagation() {},
+            stopImmediatePropagation() {}
+          });
+
+          toggle.listeners.click(click(toggle));
+          const collapsed = {
+            width: banner.style.width,
+            left: banner.style.left,
+            labelHidden: label.style.display === 'none',
+            startHidden: start.style.display === 'none',
+            expanded: toggle.getAttribute('aria-expanded')
+          };
+
+          toggle.listeners.click(click(toggle));
+          const restoredBeforeStart = {
+            width: banner.style.width,
+            labelVisible: label.style.display === '',
+            startVisible: start.style.display === '',
+            expanded: toggle.getAttribute('aria-expanded')
+          };
+
+          start.listeners.click(click(start));
+          const activeToggleClick = click(toggle);
+          document.listeners.click(activeToggleClick);
+          toggle.listeners.click(activeToggleClick);
+
+          return {
+            collapsed,
+            restoredBeforeStart,
+            activeCollapseWidth: banner.style.width,
+            didCaptureToggle: window.__statsWidgetPicked !== null
+          };
+        })()
+        """))
+        let result = try XCTUnwrap(value.toDictionary() as? [String: Any])
+        let collapsed = try XCTUnwrap(result["collapsed"] as? [String: Any])
+        let restored = try XCTUnwrap(result["restoredBeforeStart"] as? [String: Any])
+
+        XCTAssertEqual(collapsed["width"] as? String, "32px")
+        XCTAssertEqual(collapsed["left"] as? String, "50%")
+        XCTAssertEqual(collapsed["labelHidden"] as? Bool, true)
+        XCTAssertEqual(collapsed["startHidden"] as? Bool, true)
+        XCTAssertEqual(collapsed["expanded"] as? String, "false")
+        XCTAssertEqual(restored["width"] as? String, "auto")
+        XCTAssertEqual(restored["labelVisible"] as? Bool, true)
+        XCTAssertEqual(restored["startVisible"] as? Bool, true)
+        XCTAssertEqual(restored["expanded"] as? String, "true")
+        XCTAssertEqual(result["activeCollapseWidth"] as? String, "32px")
+        XCTAssertEqual(result["didCaptureToggle"] as? Bool, false)
+    }
+
     func testScrapePreparationDoesNotEnableAccessibilityDomain() {
         XCTAssertEqual(ChromeCDPClient.pagePreparationDomains, ["Page.enable", "Network.enable", "DOM.enable"])
         XCTAssertFalse(ChromeCDPClient.pagePreparationDomains.contains("Accessibility.enable"))
@@ -263,5 +356,87 @@ final class IdentifyElementRegressionTests: XCTestCase {
         let value = try XCTUnwrap(context.evaluateScript(IdentifyOverlayPollJS.pollScript))
         let state = try XCTUnwrap(value.toDictionary() as? [String: Any])
         return try XCTUnwrap(state["active"] as? Bool)
+    }
+
+    private func overlayDOMContext() throws -> JSContext {
+        let context = try XCTUnwrap(JSContext())
+        context.evaluateScript("""
+        var Node = { ELEMENT_NODE: 1 };
+
+        function makeElement(tagName) {
+          return {
+            nodeType: Node.ELEMENT_NODE,
+            tagName: String(tagName).toUpperCase(),
+            style: { cssText: '' },
+            attributes: {},
+            children: [],
+            listeners: {},
+            parentNode: null,
+            parentElement: null,
+            previousElementSibling: null,
+            textContent: '',
+            innerText: '',
+            setAttribute(name, value) { this.attributes[name] = String(value); },
+            getAttribute(name) { return this.attributes[name] || null; },
+            appendChild(child) {
+              child.parentNode = this;
+              child.parentElement = this;
+              this.children.push(child);
+              return child;
+            },
+            removeChild(child) {
+              this.children = this.children.filter(candidate => candidate !== child);
+              child.parentNode = null;
+              child.parentElement = null;
+              return child;
+            },
+            addEventListener(type, listener) { this.listeners[type] = listener; },
+            removeEventListener(type, listener) {
+              if (this.listeners[type] === listener) delete this.listeners[type];
+            },
+            contains(candidate) {
+              return candidate === this || this.children.some(child => child.contains(candidate));
+            },
+            getBoundingClientRect() {
+              return { left: 0, top: 0, width: 20, height: 20 };
+            }
+          };
+        }
+
+        function findByAttribute(node, attribute) {
+          if (node.attributes && node.attributes[attribute]) return node;
+          for (const child of node.children || []) {
+            const match = findByAttribute(child, attribute);
+            if (match) return match;
+          }
+          return null;
+        }
+
+        var document = {
+          body: makeElement('body'),
+          documentElement: null,
+          listeners: {},
+          createElement: makeElement,
+          addEventListener(type, listener) { this.listeners[type] = listener; },
+          removeEventListener(type, listener) {
+            if (this.listeners[type] === listener) delete this.listeners[type];
+          },
+          querySelector(selector) {
+            const match = selector.match(/^\\[([^\\]]+)\\]$/);
+            return match ? findByAttribute(this.body, match[1]) : null;
+          },
+          querySelectorAll() { return []; }
+        };
+        var window = {
+          __statsWidgetInspectCleanup: null,
+          __statsWidgetPicked: null,
+          __statsWidgetInspectError: null,
+          __statsWidgetInspectCanceled: false,
+          innerWidth: 1200,
+          innerHeight: 800,
+          devicePixelRatio: 2
+        };
+        """)
+        return context
     }
 }
